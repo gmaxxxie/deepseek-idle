@@ -46,6 +46,8 @@ interface Config {
   schedule?: {
     timezone?: string;
     peakWindows?: TimeWindow[];
+    /** 高峰提前量(分钟): 距高峰开始前 N 分钟就按高峰处理, 避免会话中还在用官方 */
+    prePeakMinutes?: number;
   };
   /** 高峰时段目标(回切 provider) */
   peak?: {
@@ -97,6 +99,7 @@ const DEFAULT_CONFIG: Required<Config> = {
       { start: "09:00", end: "12:00" },
       { start: "14:00", end: "18:00" },
     ],
+    prePeakMinutes: 5,
   },
   peak: {
     provider: "new-api",
@@ -127,10 +130,11 @@ function loadConfig(): Config {
   return structuredClone(DEFAULT_CONFIG);
 }
 
-/** 判断给定时间是否处于高峰时段(北京时间)。返回 true=高峰 */
+/** 判断给定时间(含高峰提前量)是否处于高峰时段(北京时间)。返回 true=高峰 */
 function isPeakTime(cfg: Config, now: Date): boolean {
   const tz = cfg.schedule?.timezone ?? DEFAULT_CONFIG.schedule.timezone;
   const windows = cfg.schedule?.peakWindows ?? DEFAULT_CONFIG.schedule.peakWindows;
+  const leadMinutes = cfg.schedule?.prePeakMinutes ?? 0;
 
   // 用 Intl 获取北京时间的小时:分钟
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -150,11 +154,11 @@ function isPeakTime(cfg: Config, now: Date): boolean {
   // 周末全天空闲
   if (isWeekend) return false;
 
-  // 检查高峰窗口 (start <= t < end)
+  // 检查高峰窗口。提前量只作用于开始: now >= (start - lead) && now < end
   for (const w of windows ?? []) {
     const [sh, sm] = w.start.split(":").map(Number);
     const [eh, em] = w.end.split(":").map(Number);
-    const startM = sh * 60 + sm;
+    const startM = sh * 60 + sm - leadMinutes; // 开始前 lead 分钟即视为高峰
     const endM = eh * 60 + em;
     if (minutes >= startM && minutes < endM) return true;
   }

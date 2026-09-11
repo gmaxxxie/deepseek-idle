@@ -6,7 +6,7 @@
     "provider": "deepseek-official",
     "model": "deepseek-flash"
   },
-  "//schedule": "高峰时段(北京时间)。空闲时段=高峰之外的所有时间(含周末)",
+  "//schedule": "高峰时段(北京时间)。空闲时段=高峰之外的所有时间(含周末)。prePeakMinutes: 高峰开始前N分钟就提前切换, 避免会话中还在用官方",
   "schedule": {
     "timezone": "Asia/Shanghai",
     "peakWindows": [
@@ -18,7 +18,8 @@
         "start": "14:00",
         "end": "18:00"
       }
-    ]
+    ],
+    "prePeakMinutes": 5
   },
   "//peak": "高峰时段回切目标 (provider/model)",
   "peak": {

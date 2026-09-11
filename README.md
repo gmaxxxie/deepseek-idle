@@ -21,6 +21,7 @@ DeepSeek 空闲时段（半价）自动切换扩展 for [pi](https://pi.dev)。
 
 - **高峰时段**（北京时间）：周一至周五 `09:00-12:00`、`14:00-18:00`
 - **空闲时段**：其余所有时间 + **周末全天** → 官方 API **半价**
+- **提前切换**：高峰开始前 5 分钟（`prePeakMinutes`）就提前切回网关，避免会话中途进入高峰还在用官方
 
 ## 安装
 
@@ -79,7 +80,8 @@ export DEEPSEEK_API_KEY="sk-你的key"
     "peakWindows": [
       { "start": "09:00", "end": "12:00" },
       { "start": "14:00", "end": "18:00" }
-    ]
+    ],
+    "prePeakMinutes": 5
   },
   "peak": {
     "provider": "new-api",
