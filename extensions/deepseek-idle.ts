@@ -2,7 +2,7 @@
  * DeepSeek Idle-Time Switcher
  *
  * 在 DeepSeek 官方 API 空闲时段(半价)自动切换到官方模型；
- * 高峰时段保持用户手动选择的模型(如 new-api/nextapi 网关)。
+ * 高峰时段自动切回指定 provider (如 new-api/nextapi 网关)。
  *
  * 空闲时段(北京时间): 周一至周五 09:00-12:00、14:00-18:00 之外的所有时间(含周末全天)
  *
@@ -11,10 +11,15 @@
  *   /ds on         - 开启自动切换
  *   /ds off        - 关闭自动切换
  *   /ds status     - 查看状态
- *   /ds now        - 立即切换到官方模型(空闲时段)
+ *   /ds now        - 立即切换到当前时段应用的模型
+ *   /ds peak <provider/model> - 设置高峰时段回切目标
+ *
+ * 依赖: DeepSeek 官方 provider 已在 pi 中配置 (models.json / settings.json)
+ *   - provider 名: deepseek-official (默认, 可通过配置改)
+ *   - 模型: deepseek-flash / deepseek-v4-pro
+ *   - API key: 推荐环境变量 DEEPSEEK_API_KEY
  *
  * 配置: ~/.pi/agent/extensions/deepseek-idle.json
- * API key: 环境变量 DEEPSEEK_API_KEY (或在配置里写死)
  */
 
 import { readFileSync, existsSync } from "node:fs";
@@ -33,11 +38,9 @@ interface TimeWindow {
 
 interface Config {
   enabled?: boolean;
+  /** 官方 provider 配置 (已在 pi 中注册, 这里只记录引用) */
   official?: {
-    baseUrl?: string;
-    apiKey?: string;
-    api?: string;
-    providerName?: string;
+    provider?: string;
     model?: string;
   };
   schedule?: {
@@ -70,7 +73,6 @@ function findConfigPath(): string {
   if (process.env.DEEPSEEK_IDLE_CONFIG) return process.env.DEEPSEEK_IDLE_CONFIG;
   const userConfig = resolve(HOME, ".pi/agent/extensions/deepseek-idle.json");
   if (existsSync(userConfig)) return userConfig;
-  // 包内示例: 本文件同目录的 deepseek-idle.json
   try {
     const here = dirname(fileURLToPath(import.meta.url));
     const localConfig = resolve(here, "deepseek-idle.json");
@@ -86,10 +88,7 @@ const STATE_ENTRY_TYPE = "deepseek-idle-state";
 const DEFAULT_CONFIG: Required<Config> = {
   enabled: true,
   official: {
-    baseUrl: "https://api.deepseek.com",
-    apiKey: "$DEEPSEEK_API_KEY",
-    api: "openai-completions",
-    providerName: "deepseek-official",
+    provider: "deepseek-official",
     model: "deepseek-flash",
   },
   schedule: {
@@ -115,27 +114,17 @@ function loadConfig(): Config {
       const raw = readFileSync(CONFIG_PATH, "utf8");
       const parsed = JSON.parse(raw) as Config;
       // 深度合并到默认值
-      const cfg = {
+      return {
         enabled: parsed.enabled ?? DEFAULT_CONFIG.enabled,
         official: { ...DEFAULT_CONFIG.official, ...(parsed.official ?? {}) },
         schedule: { ...DEFAULT_CONFIG.schedule, ...(parsed.schedule ?? {}) },
         peak: { ...DEFAULT_CONFIG.peak, ...(parsed.peak ?? {}) },
       };
-      // 环境变量覆盖 API key (优先级最高, 避免共享包带 key)
-      if (process.env.DEEPSEEK_API_KEY) {
-        cfg.official.apiKey = process.env.DEEPSEEK_API_KEY;
-      }
-      return cfg;
     }
   } catch (err) {
     console.error("[deepseek-idle] 读取配置失败:", err);
   }
-  // 配置不存在 → 用默认值(API key 用环境变量)
-  const def = structuredClone(DEFAULT_CONFIG);
-  if (process.env.DEEPSEEK_API_KEY) {
-    def.official.apiKey = process.env.DEEPSEEK_API_KEY;
-  }
-  return def;
+  return structuredClone(DEFAULT_CONFIG);
 }
 
 /** 判断给定时间是否处于高峰时段(北京时间)。返回 true=高峰 */
@@ -193,7 +182,7 @@ function formatNow(cfg: Config, now: Date): string {
 
 export default function (pi: ExtensionAPI) {
   const cfg = loadConfig();
-  const officialProvider = cfg.official!.providerName!;
+  const officialProvider = cfg.official!.provider!;
   const officialModelId = cfg.official!.model!;
   const officialModelName = `${officialProvider}/${officialModelId}`;
 
@@ -201,41 +190,9 @@ export default function (pi: ExtensionAPI) {
   let extEnabled = cfg.enabled !== false;
   let lastSwitch = "";
   let lastTarget: string | null = null;
-
-  // 记录最近一次自动切换到的模型, 避免重复切换
   let lastAutoTarget: string | null = null;
-  // 记录用户手动选择的模型(高峰时段切回目标), 通过 model_select 跟踪
+  // 记录用户手动选择的模型(非官方模型的都算用户手动选)
   let userModelRef: string | null = null;
-
-  // =============================================================================
-  // 注册 DeepSeek 官方 provider
-  // =============================================================================
-
-  pi.registerProvider(officialProvider, {
-    name: "DeepSeek Official",
-    baseUrl: cfg.official!.baseUrl!,
-    apiKey: cfg.official!.apiKey!,
-    api: (cfg.official!.api as any) ?? "openai-completions",
-    models: [
-      {
-        id: officialModelId,
-        name: "DeepSeek Flash (官方, 空闲半价)",
-        reasoning: true,
-        input: ["text"],
-        // 空闲时段价格 (CNY/1M tokens): 缓存命中 0.02, 输入 1, 输出 4
-        cost: { input: 1, output: 4, cacheRead: 0.02, cacheWrite: 0 },
-        contextWindow: 1_000_000,
-        maxTokens: 384_000,
-        compat: {
-          supportsStore: false,
-          supportsDeveloperRole: false,
-          maxTokensField: "max_tokens",
-          requiresReasoningContentOnAssistantMessages: true,
-          thinkingFormat: "deepseek",
-        },
-      },
-    ],
-  });
 
   // =============================================================================
   // 状态栏更新
@@ -276,11 +233,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   function persistState(ctx?: ExtensionContext) {
-    const state: State = {
-      extEnabled,
-      lastSwitch,
-      lastTarget,
-    };
+    const state: State = { extEnabled, lastSwitch, lastTarget };
     if (ctx) {
       pi.appendEntry<State>(STATE_ENTRY_TYPE, state);
     }
@@ -291,7 +244,7 @@ export default function (pi: ExtensionAPI) {
   // =============================================================================
 
   /**
-   * 空闲时段切换到官方模型; 高峰时段保持用户手动选择的模型。
+   * 空闲时段切换到官方模型; 高峰时段切回 peak 配置的模型 (或用户手动选)。
    * 返回切换结果描述。
    */
   async function autoSwitch(ctx: ExtensionContext): Promise<{ switched: boolean; message: string }> {
@@ -312,79 +265,56 @@ export default function (pi: ExtensionAPI) {
       userModelRef = currentRef;
     }
 
-    // 查找官方模型对象
-    const officialModel = ctx.modelRegistry.find(officialProvider, officialModelId);
-    if (!officialModel) {
-      return { switched: false, message: `找不到官方模型 ${officialModelName}` };
+    // 目标模型
+    let targetProvider: string;
+    let targetModelId: string;
+    if (peak) {
+      // 高峰: peak 配置 → 回退用户手动选
+      targetProvider = cfg.peak?.provider || (userModelRef ? userModelRef.split("/")[0] : "");
+      targetModelId = cfg.peak?.model || (userModelRef ? userModelRef.split("/")[1] : "");
+    } else {
+      // 空闲: 官方模型
+      targetProvider = officialProvider;
+      targetModelId = officialModelId;
     }
 
-    if (peak) {
-      // 高峰时段: 切换到 peak 配置的模型 (或用户手动选的模型)
-      const peakProvider = cfg.peak?.provider ?? "";
-      const peakModelId = cfg.peak?.model ?? "";
-      // 若 peak 未配置, 回退到用户手动选的模型
-      const targetProvider = peakProvider || (userModelRef ? userModelRef.split("/")[0] : "");
-      const targetModelId = peakModelId || (userModelRef ? userModelRef.split("/")[1] : "");
-      const peakRef = targetProvider && targetModelId ? `${targetProvider}/${targetModelId}` : "";
+    const targetRef = targetProvider && targetModelId ? `${targetProvider}/${targetModelId}` : "";
 
-      // 当前已是目标 → 无需切换
-      if (!peakRef || currentRef === peakRef) {
-        return {
-          switched: false,
-          message: peakRef
-            ? `高峰时段(${timeStr}), 已在 ${peakRef}`
-            : `高峰时段(${timeStr}), 保持当前模型 ${currentRef || "未知"}`,
-        };
-      }
-
-      const peakModel = ctx.modelRegistry.find(targetProvider, targetModelId);
-      if (!peakModel) {
-        return {
-          switched: false,
-          message: `高峰时段: 找不到模型 ${peakRef} (可用 /df peak <provider/model> 设置)`,
-        };
-      }
-
-      const ok = await pi.setModel(peakModel);
-      if (!ok) {
-        return {
-          switched: false,
-          message: `高峰时段: 切换失败 ${peakRef} (未配置 API key?)`,
-        };
-      }
-
-      lastSwitch = timeStr;
-      lastTarget = peakRef;
-      lastAutoTarget = peakRef;
-      persistState(ctx);
-
+    // 当前已是目标 → 无需切换
+    if (!targetRef || currentRef === targetRef) {
       return {
-        switched: true,
-        message: `高峰时段(${timeStr}), 已切换到 ${peakRef}`,
+        switched: false,
+        message: targetRef
+          ? `${peak ? "高峰" : "空闲"}时段(${timeStr}), 已在 ${targetRef}`
+          : `${peak ? "高峰" : "空闲"}时段(${timeStr}), 无目标模型`,
       };
     }
 
-    // 空闲时段: 切换到官方模型(如果当前不是)
-    if (currentRef === officialModelName) {
-      return { switched: false, message: `已在官方模型(${timeStr})` };
+    // 从 pi 模型注册表查找目标模型 (不在 pi 里配置的无法切换)
+    const targetModel = ctx.modelRegistry.find(targetProvider, targetModelId);
+    if (!targetModel) {
+      return {
+        switched: false,
+        message: `找不到模型 ${targetRef} — 请确认已在 pi 中配置该 provider (models.json/settings.json)`,
+      };
     }
 
-    const ok = await pi.setModel(officialModel);
+    const ok = await pi.setModel(targetModel);
     if (!ok) {
       return {
         switched: false,
-        message: `切换失败: ${officialModelName} 未配置 API key (检查 DEEPSEEK_API_KEY)`,
+        message: `切换失败: ${targetRef} 未配置 API key`,
       };
     }
 
     lastSwitch = timeStr;
-    lastTarget = officialModelName;
-    lastAutoTarget = officialModelName;
+    lastTarget = targetRef;
+    lastAutoTarget = targetRef;
     persistState(ctx);
 
     return {
       switched: true,
-      message: `空闲时段(${timeStr}), 已切换到官方 ${officialModelName}`,
+      message: `${peak ? "高峰" : "空闲"}时段(${timeStr}), 已切换到 ${targetRef}`,
     };
   }
 
@@ -459,11 +389,11 @@ export default function (pi: ExtensionAPI) {
       if (!target) {
         const peakRef = cfg.peak?.provider && cfg.peak?.model
           ? `${cfg.peak.provider}/${cfg.peak.model}`
-          : "未设置";
+          : "未设置(回退用户手动选)";
         ctx.ui.notify(`高峰时段目标: ${peakRef}`, "info");
         return;
       }
-      // 解析 provider/model 或 provider/model:model
+      // 解析 provider/model
       const parts = target.split("/");
       const provider = parts[0]?.trim();
       const model = parts[1]?.trim();

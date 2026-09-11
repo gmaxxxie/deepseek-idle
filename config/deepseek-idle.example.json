@@ -1,15 +1,9 @@
 {
-  "//": "deepseek-idle 扩展配置示例。复制为 deepseek-idle.json 使用",
-  "//key": "API key 建议用环境变量 DEEPSEEK_API_KEY 设置, 也可填在这里",
+  "//": "deepseek-idle 扩展配置。修改后执行 /reload 生效",
+  "//official": "官方 provider 已在 pi 的 models.json 配置 (provider: deepseek-official, key 用环境变量 DEEPSEEK_API_KEY)",
   "enabled": true,
-  "//official": "DeepSeek 官方 API 配置",
   "official": {
-    "baseUrl": "https://api.deepseek.com",
-    "//apiKey": "留空则使用环境变量 DEEPSEEK_API_KEY",
-    "apiKey": "$DEEPSEEK_API_KEY",
-    "api": "openai-completions",
-    "providerName": "deepseek-official",
-    "//model": "空闲时段使用的官方模型 (deepseek-flash 空闲半价)",
+    "provider": "deepseek-official",
     "model": "deepseek-flash"
   },
   "//schedule": "高峰时段(北京时间)。空闲时段=高峰之外的所有时间(含周末)",

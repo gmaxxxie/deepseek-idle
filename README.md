@@ -6,11 +6,16 @@ DeepSeek 空闲时段（半价）自动切换扩展 for [pi](https://pi.dev)。
 
 ## 功能
 
-- 🌙 **空闲时段**（半价）：自动切换到 DeepSeek 官方 API 的 `deepseek-flash`
+- 🌙 **空闲时段**（半价）：自动切换到 DeepSeek 官方模型的 `deepseek-flash`
 - ⛰️ **高峰时段**：自动切回配置的 provider（默认 `new-api/deepseek-v4-flash`，可改）
 - 每轮对话开始前自动检查并切换，幂等不重复
 - 状态栏常驻显示：`⛰️Peak new-api` / `🌙Idle deepseek-official`
 - 可随时开关、手动切换、设置高峰目标
+
+## 设计
+
+> 本扩展**不注册任何 provider**，只负责**定时切换模型**。
+> DeepSeek 官方和你的网关都是 pi 自己的 provider（配置在 `models.json` / `settings.json`），扩展从 pi 模型注册表读取模型并调用 `pi.setModel()` 切换。这样 API key、模型配置统一由 pi 管理。
 
 ## 空闲时段规则（DeepSeek 官方）
 
@@ -31,21 +36,47 @@ pi install git:github.com/<你的用户名>/deepseek-idle
 pi install /path/to/deepseek-idle-pkg
 ```
 
-### 2. 配置 API key（推荐环境变量）
+### 2. 在 pi 中配置 DeepSeek 官方 provider
+
+编辑 `~/.pi/agent/models.json`（或用 `pi config`），加入：
+
+```json
+{
+  "providers": {
+    "deepseek-official": {
+      "baseUrl": "https://api.deepseek.com",
+      "api": "openai-completions",
+      "apiKey": "$DEEPSEEK_API_KEY",
+      "models": [
+        {
+          "id": "deepseek-flash",
+          "name": "DeepSeek Flash (官方)",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 1000000,
+          "maxTokens": 384000,
+          "cost": { "input": 1, "output": 4, "cacheRead": 0.02, "cacheWrite": 0 },
+          "compat": {
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "maxTokensField": "max_tokens",
+            "requiresReasoningContentOnAssistantMessages": true,
+            "thinkingFormat": "deepseek"
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+设置 API key（推荐环境变量，包内不含任何 key）：
 
 ```bash
-# 写入你的 shell 配置 (~/.zshrc / ~/.bashrc)
 export DEEPSEEK_API_KEY="sk-你的key"
 ```
 
-> 安全：包内**不含**任何 API key。你也可以把 key 写进配置文件的 `official.apiKey`，但不建议共享该文件。
-
 ### 3. 配置高峰回切目标（可选）
-
-扩展会自动加载配置，优先顺序：
-1. `$DEEPSEEK_IDLE_CONFIG` 环境变量指向的文件
-2. `~/.pi/agent/extensions/deepseek-idle.json`
-3. 包内 `config/deepseek-idle.example.json`（默认值）
 
 默认高峰回切目标为 `new-api/deepseek-v4-flash`，可用命令修改：
 
@@ -67,15 +98,13 @@ export DEEPSEEK_API_KEY="sk-你的key"
 
 ## 配置项
 
-配置文件 `deepseek-idle.json`：
+配置文件 `deepseek-idle.json`（查找顺序：`$DEEPSEEK_IDLE_CONFIG` → `~/.pi/agent/extensions/deepseek-idle.json` → 包内示例）：
 
 ```json
 {
   "enabled": true,
   "official": {
-    "baseUrl": "https://api.deepseek.com",
-    "apiKey": "$DEEPSEEK_API_KEY",
-    "providerName": "deepseek-official",
+    "provider": "deepseek-official",
     "model": "deepseek-flash"
   },
   "schedule": {
