@@ -1,0 +1,6 @@
+node_modules/
+*.log
+.DS_Store
+# 本机配置文件(可能含 key)
+deepseek-idle.json
+config/deepseek-idle.json

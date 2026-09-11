@@ -1,0 +1,10 @@
+{
+  "name": "pi-deepseek-idle",
+  "version": "0.1.0",
+  "description": "DeepSeek idle-time (off-peak) auto-switcher for pi: use official DeepSeek API at half price during off-peak hours, switch back to your gateway/nextapi provider during peak hours.",
+  "keywords": ["pi-package", "deepseek", "off-peak", "idle", "provider", "switch"],
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./extensions"]
+  }
+}
