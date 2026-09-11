@@ -8,11 +8,15 @@
  *
  * 用法:
  *   /ds            - 查看当前状态
- *   /ds on         - 开启自动切换
- *   /ds off        - 关闭自动切换
+ *   /ds on         - 开启自动切换 (on)
+ *   /ds auto       - 设为自动 (auto, 与 on 行为相同)
+ *   /ds off        - 关闭自动切换 (默认)
  *   /ds status     - 查看状态
  *   /ds now        - 立即切换到当前时段应用的模型
  *   /ds peak <provider/model> - 设置高峰时段回切目标
+ *
+ * 开关三态: off(默认) | auto(自动) | on
+ *   - 配置 enabled=true → 初始 auto; enabled=false → 初始 off
  *
  * 依赖: DeepSeek 官方 provider 已在 pi 中配置 (models.json / settings.json)
  *   - provider 名: deepseek-official (默认, 可通过配置改)
@@ -57,7 +61,8 @@ interface Config {
 }
 
 interface State {
-  extEnabled: boolean;      // 扩展开关(持久化)
+  /** 开关状态: "off" 关闭 | "auto" 自动(默认) | "on" 手动开启 */
+  mode: "off" | "auto" | "on";
   lastSwitch: string;       // 最近一次自动切换的时间
   lastTarget: string | null; // 最近自动切换到的模型 "provider/id"
 }
@@ -88,7 +93,7 @@ const CONFIG_PATH = findConfigPath();
 const STATE_ENTRY_TYPE = "deepseek-idle-state";
 
 const DEFAULT_CONFIG: Required<Config> = {
-  enabled: true,
+  enabled: false,
   official: {
     provider: "deepseek-official",
     model: "deepseek-flash",
@@ -190,8 +195,8 @@ export default function (pi: ExtensionAPI) {
   const officialModelId = cfg.official!.model!;
   const officialModelName = `${officialProvider}/${officialModelId}`;
 
-  // 扩展运行时开关(会话内; 持久化到 session entry)
-  let extEnabled = cfg.enabled !== false;
+  // 开关状态: "off" | "auto" | "on"。初始: 配置 enabled=true → auto, false → off
+  let mode: "off" | "auto" | "on" = cfg.enabled !== false ? "auto" : "off";
   let lastSwitch = "";
   let lastTarget: string | null = null;
   let lastAutoTarget: string | null = null;
@@ -207,7 +212,7 @@ export default function (pi: ExtensionAPI) {
     const peak = isPeakTime(cfg, now);
     const model = ctx?.model ?? undefined;
 
-    if (!extEnabled) {
+    if (mode === "off") {
       ctx?.ui.setStatus("deepseek-idle", undefined);
       return;
     }
@@ -225,7 +230,13 @@ export default function (pi: ExtensionAPI) {
       for (const entry of ctx.sessionManager.getBranch()) {
         if (entry.type === "custom" && entry.customType === STATE_ENTRY_TYPE) {
           const data = entry.data as State;
-          extEnabled = data.extEnabled ?? (cfg.enabled !== false);
+          // 兼容旧版 extEnabled 字段
+          const oldEnabled = (data as any).extEnabled;
+          if (typeof oldEnabled === "boolean") {
+            mode = oldEnabled ? "on" : "off";
+          } else {
+            mode = data.mode ?? (cfg.enabled !== false ? "auto" : "off");
+          }
           lastSwitch = data.lastSwitch ?? "";
           lastTarget = data.lastTarget ?? null;
           break;
@@ -237,7 +248,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   function persistState(ctx?: ExtensionContext) {
-    const state: State = { extEnabled, lastSwitch, lastTarget };
+    const state: State = { mode, lastSwitch, lastTarget };
     if (ctx) {
       pi.appendEntry<State>(STATE_ENTRY_TYPE, state);
     }
@@ -252,8 +263,8 @@ export default function (pi: ExtensionAPI) {
    * 返回切换结果描述。
    */
   async function autoSwitch(ctx: ExtensionContext): Promise<{ switched: boolean; message: string }> {
-    if (!extEnabled) {
-      return { switched: false, message: "扩展已关闭" };
+    if (mode === "off") {
+      return { switched: false, message: "扩展已关闭 (用 /ds on 或 /ds auto 开启)" };
     }
 
     const now = new Date();
@@ -327,7 +338,7 @@ export default function (pi: ExtensionAPI) {
   // =============================================================================
 
   pi.on("before_agent_start", async (_event, ctx) => {
-    if (!extEnabled) return;
+    if (mode === "off") return;
     const result = await autoSwitch(ctx);
     if (result.switched) {
       ctx.ui.notify(result.message, "info");
@@ -417,9 +428,19 @@ export default function (pi: ExtensionAPI) {
     const arg = (args ?? "").trim().toLowerCase();
 
     if (arg === "on" || arg === "enable") {
-      extEnabled = true;
+      mode = "on";
       persistState(ctx);
-      ctx.ui.notify("DeepSeek 空闲时段切换已开启", "info");
+      ctx.ui.notify("DeepSeek 时段切换已开启 (on)", "info");
+      const r = await autoSwitch(ctx);
+      if (r.switched) ctx.ui.notify(r.message, "info");
+      updateStatus(ctx);
+      return;
+    }
+
+    if (arg === "auto") {
+      mode = "auto";
+      persistState(ctx);
+      ctx.ui.notify("DeepSeek 时段切换已设为自动 (auto)", "info");
       const r = await autoSwitch(ctx);
       if (r.switched) ctx.ui.notify(r.message, "info");
       updateStatus(ctx);
@@ -427,10 +448,10 @@ export default function (pi: ExtensionAPI) {
     }
 
     if (arg === "off" || arg === "disable") {
-      extEnabled = false;
+      mode = "off";
       persistState(ctx);
       ctx.ui.setStatus("deepseek-idle", undefined);
-      ctx.ui.notify("DeepSeek 空闲时段切换已关闭", "info");
+      ctx.ui.notify("DeepSeek 时段切换已关闭 (off)", "info");
       return;
     }
 
@@ -477,22 +498,23 @@ export default function (pi: ExtensionAPI) {
       ? `${cfg.peak.provider}/${cfg.peak.model}`
       : (userModelRef ?? "保持手动");
 
+    const modeLabel = mode === "off" ? "off" : mode === "auto" ? "auto" : "on";
     ctx.ui.notify(
       [
-        `状态: ${extEnabled ? "开" : "关"}`,
+        `状态: ${modeLabel}`,
         `当前时段: ${timeStr} — ${peak ? "高峰" : "空闲"}`,
         `当前模型: ${currentRef}`,
         `空闲时段目标: ${officialModelName}`,
         `高峰时段目标: ${peakRef}`,
       ].join(" | "),
-      extEnabled ? "info" : "warning",
+      mode === "off" ? "warning" : "info",
     );
     updateStatus(ctx);
   };
 
   pi.registerCommand("ds", {
     description:
-      "DeepSeek 时段切换: /ds [on|off|status|now|peak <provider/model>] — 空闲用官方API, 高峰切回指定provider",
+      "DeepSeek 时段切换: /ds [on|auto|off|status|now|peak <provider/model>] — 空闲用官方API, 高峰切回指定provider",
     handler: dsHandler,
   });
 

@@ -1,7 +1,7 @@
 {
-  "//": "deepseek-idle 扩展配置。修改后执行 /reload 生效",
+  "//": "deepseek-idle 扩展配置。修改后执行 /reload 生效。默认关闭, 用 /ds on 开启",
   "//official": "官方 provider 已在 pi 的 models.json 配置 (provider: deepseek-official, key 用环境变量 DEEPSEEK_API_KEY)",
-  "enabled": true,
+  "enabled": false,
   "official": {
     "provider": "deepseek-official",
     "model": "deepseek-flash"

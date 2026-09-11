@@ -51,11 +51,14 @@ export DEEPSEEK_API_KEY="sk-你的key"
 | 命令 | 功能 |
 |------|------|
 | `/df` 或 `/df status` | 查看状态 |
-| `/df on` | 开启自动切换 |
-| `/df off` | 关闭自动切换 |
+| `/df on` | 开启自动切换 (on) |
+| `/df auto` | 设为自动 (auto, 默认自动开启) |
+| `/df off` | 关闭自动切换 (默认) |
 | `/df now` | 立即切换 |
 | `/df peak <provider>/<model>` | 设置高峰回切目标 |
 | `/ds ...` | `/df` 的别名 |
+
+开关三态：`off`（默认）| `auto`（自动）| `on`（手动开启）。配置 `enabled: true` 时初始为 `auto`，`false` 时初始为 `off`。
 
 默认高峰回切目标为 `new-api/deepseek-v4-flash`，可随时修改：
 
