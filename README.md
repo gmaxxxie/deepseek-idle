@@ -27,63 +27,23 @@ DeepSeek 空闲时段（半价）自动切换扩展 for [pi](https://pi.dev)。
 ### 1. 安装包
 
 ```bash
-pi install git:github.com/<你的用户名>/deepseek-idle
+pi install git:github.com/gmaxxxie/deepseek-idle
 ```
 
-或本地目录：
-
-```bash
-pi install /path/to/deepseek-idle-pkg
-```
-
-### 2. 在 pi 中配置 DeepSeek 官方 provider
-
-编辑 `~/.pi/agent/models.json`（或用 `pi config`），加入：
-
-```json
-{
-  "providers": {
-    "deepseek-official": {
-      "baseUrl": "https://api.deepseek.com",
-      "api": "openai-completions",
-      "apiKey": "$DEEPSEEK_API_KEY",
-      "models": [
-        {
-          "id": "deepseek-flash",
-          "name": "DeepSeek Flash (官方)",
-          "reasoning": true,
-          "input": ["text"],
-          "contextWindow": 1000000,
-          "maxTokens": 384000,
-          "cost": { "input": 1, "output": 4, "cacheRead": 0.02, "cacheWrite": 0 },
-          "compat": {
-            "supportsStore": false,
-            "supportsDeveloperRole": false,
-            "maxTokensField": "max_tokens",
-            "requiresReasoningContentOnAssistantMessages": true,
-            "thinkingFormat": "deepseek"
-          }
-        }
-      ]
-    }
-  }
-}
-```
-
-设置 API key（推荐环境变量，包内不含任何 key）：
+### 2. 设置 API key
 
 ```bash
 export DEEPSEEK_API_KEY="sk-你的key"
 ```
 
-### 3. 配置高峰回切目标（可选）
+### 3. 完成 ✓
 
-默认高峰回切目标为 `new-api/deepseek-v4-flash`，可用命令修改：
+扩展启动时会自动检查 pi 中是否已配置 `deepseek-official` provider：
 
-```bash
-/df peak new-api/deepseek-v4-flash   # 设置高峰回切目标
-/df peak                              # 查看当前高峰目标
-```
+- **已配置**（如在 `models.json` / `settings.json`）→ 直接使用，只负责切换模型
+- **未配置** → 自动注册（从 `DEEPSEEK_API_KEY` 环境变量读取 key）
+
+无需手动改 `models.json`！
 
 ## 使用
 
@@ -95,6 +55,13 @@ export DEEPSEEK_API_KEY="sk-你的key"
 | `/df now` | 立即切换 |
 | `/df peak <provider>/<model>` | 设置高峰回切目标 |
 | `/ds ...` | `/df` 的别名 |
+
+默认高峰回切目标为 `new-api/deepseek-v4-flash`，可随时修改：
+
+```bash
+/df peak new-api/deepseek-v4-flash   # 设置高峰回切目标
+/df peak                              # 查看当前高峰目标
+```
 
 ## 配置项
 

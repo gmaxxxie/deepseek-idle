@@ -340,10 +340,63 @@ export default function (pi: ExtensionAPI) {
   });
 
   // =============================================================================
+  // 兜底: 若 pi 中未配置官方 provider, 自动注册
+  // (本机已配置则不重复注册; 其他设备只需设 DEEPSEEK_API_KEY)
+  // =============================================================================
+
+  function ensureOfficialProvider(ctx: ExtensionContext) {
+    try {
+      const existing = ctx.modelRegistry.getProvider(officialProvider);
+      if (existing) {
+        return; // 已配置, 尊重现有配置
+      }
+    } catch {
+      // 忽略检查失败, 继续尝试注册
+    }
+
+    // 需要 API key 才能注册
+    const apiKey = process.env.DEEPSEEK_API_KEY;
+    if (!apiKey) {
+      console.warn(
+        `[deepseek-idle] 未找到官方 provider '${officialProvider}' 且未设置 DEEPSEEK_API_KEY, 跳过自动注册`,
+      );
+      return;
+    }
+
+    // 兜底注册官方 provider (仅当 pi 中不存在时)
+    pi.registerProvider(officialProvider, {
+      name: "DeepSeek Official (自动)",
+      baseUrl: "https://api.deepseek.com",
+      apiKey,
+      api: "openai-completions",
+      models: [
+        {
+          id: officialModelId,
+          name: `DeepSeek ${officialModelId} (官方)`,
+          reasoning: true,
+          input: ["text"],
+          cost: { input: 1, output: 4, cacheRead: 0.02, cacheWrite: 0 },
+          contextWindow: 1_000_000,
+          maxTokens: 384_000,
+          compat: {
+            supportsStore: false,
+            supportsDeveloperRole: false,
+            maxTokensField: "max_tokens",
+            requiresReasoningContentOnAssistantMessages: true,
+            thinkingFormat: "deepseek",
+          },
+        },
+      ],
+    });
+    console.log(`[deepseek-idle] 已自动注册官方 provider '${officialProvider}'`);
+  }
+
+  // =============================================================================
   // 事件: 会话启动恢复
   // =============================================================================
 
   pi.on("session_start", (_event, ctx) => {
+    ensureOfficialProvider(ctx);
     restoreState(ctx);
     updateStatus(ctx);
   });
